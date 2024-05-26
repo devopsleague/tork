@@ -153,10 +153,11 @@ func logger() echo.MiddlewareFunc {
 	skip := conf.StringsDefault("middleware.web.logger.skip", []string{"GET /health"})
 	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogURI:      true,
-		LogStatus:   true,
+		LogError:    true,
 		LogRemoteIP: true,
 		LogMethod:   true,
-		LogError:    true,
+		LogStatus:   true,
+		HandleError: true,
 		Skipper: func(c echo.Context) bool {
 			if len(skip) == 0 {
 				return false
@@ -175,7 +176,6 @@ func logger() echo.MiddlewareFunc {
 					Str("URI", v.URI).
 					Str("method", v.Method).
 					Str("remote-ip", v.RemoteIP).
-					Int("status", v.Status).
 					Msg("Request")
 			} else {
 				log.WithLevel(level).

@@ -645,3 +645,30 @@ func TestValidateWebhook(t *testing.T) {
 	err = j.Validate(inmemory.NewInMemoryDatastore())
 	assert.Error(t, err)
 }
+
+func TestValidateService(t *testing.T) {
+	s := Service{
+		Name:      "test",
+		Namespace: "default",
+		Ports: []Port{{
+			Port: "8080",
+		}},
+		Probe: &Probe{
+			Path: "/health",
+		},
+		Image: "alpine:latest",
+	}
+	err := s.Validate()
+	assert.NoError(t, err)
+
+	s = Service{
+		Name:      "test",
+		Namespace: "default",
+		Ports: []Port{{
+			Port: "8080",
+		}},
+		Image: "alpine:latest",
+	}
+	err = s.Validate()
+	assert.Error(t, err)
+}

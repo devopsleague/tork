@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"strconv"
 	"syscall"
+	"time"
 
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -136,6 +140,12 @@ func NewAPI(cfg Config) (*API, error) {
 	}
 	if v, ok := cfg.Enabled["users"]; !ok || v {
 		r.POST("/users", s.createUser)
+	}
+	if v, ok := cfg.Enabled["services"]; !ok || v {
+		r.POST("/services", s.createService)
+		r.DELETE("/services/:namespace/:name", s.deleteService)
+		r.Any("/services/:namespace/:name/:port", s.proxy)
+		r.Any("/services/:namespace/:name/:port/*", s.proxy)
 	}
 
 	// register additional custom endpoints
@@ -309,6 +319,20 @@ func bindJobInputJSON(r io.ReadCloser) (*input.Job, error) {
 	return &ji, nil
 }
 
+func bindServiceInputJSON(r io.ReadCloser) (*input.Service, error) {
+	si := input.Service{}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&si); err != nil {
+		return nil, err
+	}
+	return &si, nil
+}
+
 func bindJobInputYAML(r io.ReadCloser) (*input.Job, error) {
 	ji := input.Job{}
 	body, err := io.ReadAll(r)
@@ -321,6 +345,20 @@ func bindJobInputYAML(r io.ReadCloser) (*input.Job, error) {
 		return nil, err
 	}
 	return &ji, nil
+}
+
+func bindServiceInputYAML(r io.ReadCloser) (*input.Service, error) {
+	si := input.Service{}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(body)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&si); err != nil {
+		return nil, err
+	}
+	return &si, nil
 }
 
 // getJob
@@ -535,6 +573,9 @@ func (s *API) restartJob(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	}
+	if j.ServiceID != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "service jobs can not be restarted")
+	}
 	if j.State != tork.JobStateFailed && j.State != tork.JobStateCancelled {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("job is %s and can not be restarted", j.State))
 	}
@@ -563,6 +604,9 @@ func (s *API) cancelJob(c echo.Context) error {
 	j, err := s.ds.GetJobByID(c.Request().Context(), id)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	}
+	if j.ServiceID != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "service jobs can not be cancelled")
 	}
 	if j.State != tork.JobStateRunning && j.State != tork.JobStateScheduled {
 		return echo.NewHTTPError(http.StatusBadRequest, "job is not running")
@@ -617,6 +661,112 @@ func (s *API) createUser(c echo.Context) error {
 	} else {
 		return c.JSON(http.StatusOK, u)
 	}
+}
+
+func (a *API) createService(c echo.Context) error {
+	ctx := c.Request().Context()
+	var si *input.Service
+	var err error
+	contentType := c.Request().Header.Get("content-type")
+	switch contentType {
+	case "application/json":
+		si, err = bindServiceInputJSON(c.Request().Body)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+	case "text/yaml":
+		si, err = bindServiceInputYAML(c.Request().Body)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("unknown content type: %s", contentType))
+	}
+	if err := si.Validate(); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	s := si.ToService()
+	s.State = tork.ServiceStatePending
+	s.Name = strings.TrimSpace(s.Name)
+	s.Namespace = strings.TrimSpace(s.Namespace)
+	if s.Namespace == "" {
+		s.Namespace = tork.ServiceDefaultNamespace
+	}
+	if _, err := a.ds.GetService(ctx, s.Namespace, s.Name); err != nil {
+		if !errors.Is(err, datastore.ErrServiceNotFound) {
+			return err
+		}
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, "service already exists")
+	}
+	if err := a.ds.CreateService(ctx, s); err != nil {
+		return err
+	}
+	log.Info().Str("service-id", s.ID).Msg("created service")
+	if err := a.broker.PublishService(ctx, s); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, s)
+}
+
+func (a *API) deleteService(c echo.Context) error {
+	name := c.Param("name")
+	ns := c.Param("namespace")
+	ctx := c.Request().Context()
+	jobs, err := a.ds.GetRunningServiceJobs(ctx, ns, name)
+	if err != nil {
+		return err
+	}
+	for _, summary := range jobs {
+		job, err := a.ds.GetJobByID(ctx, summary.ID)
+		if err != nil {
+			return err
+		}
+		job.State = tork.JobStateCancelled
+		if err := a.broker.PublishJob(ctx, job); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+	}
+	if err := a.ds.DeleteService(ctx, ns, name); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "OK"})
+}
+
+func (a *API) proxy(c echo.Context) error {
+	name := c.Param("name")
+	ns := c.Param("namespace")
+	port := c.Param("port")
+	ctx := c.Request().Context()
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	tasks, err := a.ds.GetRunningServiceTasks(ctx, ns, name)
+	if err != nil {
+		if errors.Is(err, datastore.ErrServiceNotFound) {
+			return echo.ErrNotFound
+		}
+		return err
+	}
+	if len(tasks) == 0 {
+		log.Debug().Msgf("No service tasks available for service %s", name)
+		return echo.ErrServiceUnavailable
+	}
+	randomTaskIndex := r.Intn(len(tasks))
+	task := tasks[randomTaskIndex]
+	node, err := a.ds.GetNodeByID(ctx, task.NodeID)
+	if err != nil {
+		log.Error().Err(err).Msgf("error looking up node %s", task.NodeID)
+		return echo.ErrServiceUnavailable
+	}
+	backendURL, err := url.Parse(fmt.Sprintf("http://%s:%d", node.Hostname, node.Port))
+	if err != nil {
+		return err
+	}
+	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	req := c.Request()
+	path := strings.Join(strings.Split(c.Path(), "/")[5:], "/")
+	req.URL.Path = fmt.Sprintf("/tasks/%s/%s/proxy/%s", task.ID, port, path)
+	proxy.ServeHTTP(c.Response(), req)
+	return nil
 }
 
 func (s *API) Start() error {

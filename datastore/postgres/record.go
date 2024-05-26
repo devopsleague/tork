@@ -54,6 +54,7 @@ type taskRecord struct {
 
 type jobRecord struct {
 	ID          string         `db:"id"`
+	ServiceID   *string        `db:"service_id"`
 	Name        string         `db:"name"`
 	Description string         `db:"description"`
 	Tags        pq.StringArray `db:"tags"`
@@ -97,6 +98,7 @@ type nodeRecord struct {
 	Queue           string    `db:"queue"`
 	Status          string    `db:"status"`
 	Hostname        string    `db:"hostname"`
+	Port            int       `db:"port"`
 	TaskCount       int       `db:"task_count"`
 	Version         string    `db:"version_"`
 }
@@ -123,6 +125,21 @@ type roleRecord struct {
 	Slug      string    `db:"slug"`
 	Name      string    `db:"name"`
 	CreatedAt time.Time `db:"created_at"`
+}
+
+type serviceRecord struct {
+	ID        string    `db:"id"`
+	Name      string    `db:"name"`
+	Namespace string    `db:"namespace_"`
+	State     string    `db:"state"`
+	CreatedAt time.Time `db:"created_at"`
+	Run       string    `db:"run_"`
+	Image     string    `db:"image"`
+	Env       []byte    `db:"env"`
+	Queue     string    `db:"queue"`
+	Files     []byte    `db:"files_"`
+	Probe     []byte    `db:"probe"`
+	Ports     []byte    `db:"ports"`
 }
 
 func (r taskRecord) toTask() (*tork.Task, error) {
@@ -251,6 +268,7 @@ func (r nodeRecord) toNode() *tork.Node {
 		Queue:           r.Queue,
 		Status:          tork.NodeStatus(r.Status),
 		Hostname:        r.Hostname,
+		Port:            r.Port,
 		TaskCount:       r.TaskCount,
 		Version:         r.Version,
 	}
@@ -306,6 +324,7 @@ func (r jobRecord) toJob(tasks, execution []*tork.Task, createdBy *tork.User, pe
 	}
 	return &tork.Job{
 		ID:          r.ID,
+		ServiceID:   r.ServiceID,
 		Name:        r.Name,
 		Tags:        r.Tags,
 		State:       tork.JobState(r.State),
@@ -354,4 +373,37 @@ func (r roleRecord) toRole() *tork.Role {
 		CreatedAt: &r.CreatedAt,
 	}
 	return &n
+}
+
+func (r serviceRecord) toService() (*tork.Service, error) {
+	var env map[string]string
+	if err := json.Unmarshal(r.Env, &env); err != nil {
+		return nil, errors.Wrapf(err, "error deserializing service.env")
+	}
+	var files map[string]string
+	if err := json.Unmarshal(r.Files, &files); err != nil {
+		return nil, errors.Wrapf(err, "error deserializing service.files")
+	}
+	var probe tork.Probe
+	if err := json.Unmarshal(r.Probe, &probe); err != nil {
+		return nil, errors.Wrapf(err, "error deserializing service.probe")
+	}
+	var ports []*tork.Port
+	if err := json.Unmarshal(r.Ports, &ports); err != nil {
+		return nil, errors.Wrapf(err, "error deserializing service.ports")
+	}
+	return &tork.Service{
+		ID:        r.ID,
+		Name:      r.Name,
+		Namespace: r.Namespace,
+		State:     tork.ServiceState(r.State),
+		CreatedAt: r.CreatedAt,
+		Run:       r.Run,
+		Image:     r.Image,
+		Env:       env,
+		Files:     files,
+		Queue:     r.Queue,
+		Probe:     &probe,
+		Ports:     ports,
+	}, nil
 }

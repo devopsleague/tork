@@ -26,6 +26,9 @@ const (
 	// The queue used by for job creation
 	// and job-related state changes (e.g. cancellation)
 	QUEUE_JOBS = "jobs"
+	// The queue used by for service creation
+	// and service-related state changes (e.g. stopping)
+	QUEUE_SERVICES = "services"
 	// The queue used by workers to send task
 	// logs to the Coordinator
 	QUEUE_LOGS = "logs"
@@ -49,6 +52,7 @@ func IsCoordinatorQueue(qname string) bool {
 		QUEUE_ERROR,
 		QUEUE_HEARTBEAT,
 		QUEUE_JOBS,
+		QUEUE_SERVICES,
 		QUEUE_LOGS,
 	}
 	return slices.Contains(coordQueues, qname)

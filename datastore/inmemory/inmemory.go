@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -38,6 +39,7 @@ type InMemoryDatastore struct {
 	usersByUsername *cache.Cache[*tork.User]
 	roles           *cache.Cache[*tork.Role]
 	userRoles       *cache.Cache[[]*tork.UserRole]
+	services        *cache.Cache[*tork.Service]
 	logs            *cache.Cache[[]*tork.TaskLogPart]
 	logsMu          sync.RWMutex
 	nodeExpiration  *time.Duration
@@ -80,6 +82,7 @@ func NewInMemoryDatastore(opts ...Option) *InMemoryDatastore {
 	}
 	ds.nodes = cache.New[*tork.Node](nodeExp, ci)
 	ds.jobs = cache.New[*tork.Job](cache.NoExpiration, ci)
+	ds.services = cache.New[*tork.Service](cache.NoExpiration, ci)
 	ds.logs = cache.New[[]*tork.TaskLogPart](cache.NoExpiration, ci)
 	ds.usersByID = cache.New[*tork.User](cache.NoExpiration, ci)
 	ds.usersByUsername = cache.New[*tork.User](cache.NoExpiration, ci)
@@ -609,4 +612,82 @@ func (ds *InMemoryDatastore) onJobEviction(s string, job *tork.Job) {
 
 func (ds *InMemoryDatastore) HealthCheck(ctx context.Context) error {
 	return nil
+}
+
+func (ds *InMemoryDatastore) CreateService(ctx context.Context, s *tork.Service) error {
+	if s.Namespace == "" {
+		return errors.New("must provide namespace")
+	}
+	if s.Name == "" {
+		return errors.New("must provide name")
+	}
+	s.ID = uuid.NewUUID()
+	s.CreatedAt = time.Now().UTC()
+	ds.services.Set(fmt.Sprintf("%s/%s", s.Namespace, s.Name), s)
+	return nil
+}
+
+func (ds *InMemoryDatastore) GetService(ctx context.Context, ns, name string) (*tork.Service, error) {
+	svc, ok := ds.services.Get(fmt.Sprintf("%s/%s", ns, name))
+	if !ok {
+		return nil, datastore.ErrServiceNotFound
+	}
+	return svc, nil
+}
+
+func (ds *InMemoryDatastore) DeleteService(ctx context.Context, ns, name string) error {
+	ds.services.Delete(fmt.Sprintf("%s/%s", ns, name))
+	return nil
+}
+
+func (ds *InMemoryDatastore) GetRunningServiceTasks(ctx context.Context, ns, name string) ([]*tork.Task, error) {
+	svc, err := ds.GetService(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	if svc == nil {
+		return nil, datastore.ErrServiceNotFound
+	}
+	tasks := make([]*tork.Task, 0)
+	ds.jobs.Iterate(func(key string, v *tork.Job) {
+		if v.ServiceID != nil && *v.ServiceID == svc.ID {
+			exec := ds.getExecution(v.ID)
+			for _, et := range exec {
+				if et.State == tork.TaskStateRunning {
+					tasks = append(tasks, et)
+				}
+			}
+		}
+	})
+	return tasks, nil
+}
+
+func (ds *InMemoryDatastore) GetRunningServiceJobs(ctx context.Context, ns, name string) ([]*tork.JobSummary, error) {
+	svc, err := ds.GetService(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	if svc == nil {
+		return nil, datastore.ErrServiceNotFound
+	}
+	jobs := make([]*tork.JobSummary, 0)
+	ds.jobs.Iterate(func(key string, v *tork.Job) {
+		if v.ServiceID != nil && *v.ServiceID == svc.ID && v.State == tork.JobStateRunning {
+			jobs = append(jobs, tork.NewJobSummary(v))
+		}
+	})
+	return jobs, nil
+}
+
+func (ds *InMemoryDatastore) UpdateService(ctx context.Context, ns, name string, modify func(u *tork.Service) error) error {
+	if _, err := ds.GetService(ctx, ns, name); err != nil {
+		return err
+	}
+
+	return ds.services.Modify(fmt.Sprintf("%s/%s", ns, name), func(s *tork.Service) (*tork.Service, error) {
+		if err := modify(s); err != nil {
+			return nil, errors.Wrapf(err, "error modifying service %s/%s", ns, name)
+		}
+		return s, nil
+	})
 }

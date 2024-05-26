@@ -15,6 +15,7 @@ var (
 	ErrJobNotFound     = errors.New("job not found")
 	ErrUserNotFound    = errors.New("user not found")
 	ErrRoleNotFound    = errors.New("role not found")
+	ErrServiceNotFound = errors.New("service not found")
 	ErrContextNotFound = errors.New("context not found")
 )
 
@@ -51,6 +52,13 @@ type Datastore interface {
 	GetUserRoles(ctx context.Context, userID string) ([]*tork.Role, error)
 	AssignRole(ctx context.Context, userID, roleID string) error
 	UnassignRole(ctx context.Context, userID, roleID string) error
+
+	CreateService(ctx context.Context, s *tork.Service) error
+	UpdateService(ctx context.Context, ns, name string, modify func(u *tork.Service) error) error
+	DeleteService(ctx context.Context, ns, name string) error
+	GetService(ctx context.Context, ns, name string) (*tork.Service, error)
+	GetRunningServiceTasks(ctx context.Context, ns, name string) ([]*tork.Task, error)
+	GetRunningServiceJobs(ctx context.Context, ns, name string) ([]*tork.JobSummary, error)
 
 	GetMetrics(ctx context.Context) (*tork.Metrics, error)
 

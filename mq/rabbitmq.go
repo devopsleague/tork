@@ -280,7 +280,7 @@ func (b *RabbitMQBroker) subscribe(exchange, key, qname string, handler func(msg
 
 func serialize(msg any) ([]byte, error) {
 	mtype := fmt.Sprintf("%T", msg)
-	if mtype != "*tork.Task" && mtype != "*tork.Job" && mtype != "*tork.Node" && mtype != "*tork.TaskLogPart" {
+	if mtype != "*tork.Task" && mtype != "*tork.Job" && mtype != "*tork.Node" && mtype != "*tork.TaskLogPart" && mtype != "*tork.Service" {
 		return nil, errors.Errorf("unnknown type: %T", msg)
 	}
 	body, err := json.Marshal(msg)
@@ -312,6 +312,12 @@ func deserialize(tname string, body []byte) (any, error) {
 		return &n, nil
 	case "*tork.TaskLogPart":
 		p := tork.TaskLogPart{}
+		if err := json.Unmarshal(body, &p); err != nil {
+			return nil, err
+		}
+		return &p, nil
+	case "*tork.Service":
+		p := tork.Service{}
 		if err := json.Unmarshal(body, &p); err != nil {
 			return nil, err
 		}
@@ -547,6 +553,21 @@ func (b *RabbitMQBroker) SubscribeForTaskLogPart(handler func(p *tork.TaskLogPar
 		p, ok := msg.(*tork.TaskLogPart)
 		if !ok {
 			return errors.Errorf("expecting a *tork.TaskLogPart but got %T", msg)
+		}
+		handler(p)
+		return nil
+	})
+}
+
+func (b *RabbitMQBroker) PublishService(ctx context.Context, s *tork.Service) error {
+	return b.publish(ctx, exchangeDefault, QUEUE_SERVICES, s)
+}
+
+func (b *RabbitMQBroker) SubscribeForServices(handler func(s *tork.Service) error) error {
+	return b.subscribe(exchangeDefault, keyDefault, QUEUE_SERVICES, func(msg any) error {
+		p, ok := msg.(*tork.Service)
+		if !ok {
+			return errors.Errorf("expecting a *tork.Service but got %T", msg)
 		}
 		handler(p)
 		return nil

@@ -254,3 +254,17 @@ func TestInMemoryPublishAndSubsribeTaskLogPart(t *testing.T) {
 	<-processed
 	assert.NoError(t, err)
 }
+
+func TestInMemoryPublishAndSubsribeService(t *testing.T) {
+	ctx := context.Background()
+	b := mq.NewInMemoryBroker()
+	processed := make(chan any)
+	err := b.SubscribeForServices(func(p *tork.Service) error {
+		close(processed)
+		return nil
+	})
+	assert.NoError(t, err)
+	err = b.PublishService(ctx, &tork.Service{})
+	<-processed
+	assert.NoError(t, err)
+}

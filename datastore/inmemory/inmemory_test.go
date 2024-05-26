@@ -695,3 +695,73 @@ func TestInMemoryCreateRole(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, uroles, 0)
 }
+
+func TestInMemoryCreateService(t *testing.T) {
+	ctx := context.Background()
+	ds := inmemory.NewInMemoryDatastore()
+	now := time.Now().UTC()
+	svc := &tork.Service{
+		Namespace: "default",
+		Name:      "my-service",
+		State:     tork.ServiceStatePending,
+		CreatedAt: now,
+	}
+	err := ds.CreateService(ctx, svc)
+	assert.NoError(t, err)
+
+	svc2, err := ds.GetService(ctx, "default", "my-service")
+	assert.NoError(t, err)
+	assert.Equal(t, svc.ID, svc2.ID)
+	assert.Equal(t, tork.ServiceStatePending, svc2.State)
+
+	err = ds.UpdateService(ctx, svc.Namespace, svc.Name, func(u *tork.Service) error {
+		u.State = tork.ServiceStateRunning
+		return nil
+	})
+	assert.NoError(t, err)
+
+	svc3, err := ds.GetService(ctx, "default", "my-service")
+	assert.NoError(t, err)
+	assert.Equal(t, svc.ID, svc3.ID)
+	assert.Equal(t, tork.ServiceStateRunning, svc3.State)
+
+	u := &tork.User{
+		ID:        uuid.NewUUID(),
+		Username:  uuid.NewShortUUID(),
+		Name:      "Tester",
+		CreatedAt: &now,
+	}
+	err = ds.CreateUser(ctx, u)
+	assert.NoError(t, err)
+
+	j1 := tork.Job{
+		ID:        uuid.NewUUID(),
+		CreatedBy: u,
+		ServiceID: &svc.ID,
+		State:     tork.JobStateRunning,
+	}
+	err = ds.CreateJob(ctx, &j1)
+	assert.NoError(t, err)
+
+	t1 := tork.Task{
+		ID:    uuid.NewUUID(),
+		JobID: j1.ID,
+		State: tork.TaskStateRunning,
+	}
+	err = ds.CreateTask(ctx, &t1)
+	assert.NoError(t, err)
+
+	jobs, err := ds.GetRunningServiceJobs(ctx, "default", "my-service")
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 1)
+
+	tasks, err := ds.GetRunningServiceTasks(ctx, "default", "my-service")
+	assert.NoError(t, err)
+	assert.Len(t, tasks, 1)
+
+	ds.DeleteService(ctx, "default", "my-service")
+	assert.NoError(t, err)
+	svc4, err := ds.GetService(ctx, "default", "my-service")
+	assert.ErrorIs(t, err, datastore.ErrServiceNotFound)
+	assert.Nil(t, svc4)
+}

@@ -207,7 +207,7 @@ func Test_handleTaskCancel(t *testing.T) {
 
 	// cancel the task immediately upon start
 	err = b.SubscribeForTasks(mq.QUEUE_STARTED, func(tk *tork.Task) error {
-		err := w.handleTask(&tork.Task{
+		err := w.cancelTask(&tork.Task{
 			ID:    tid,
 			State: tork.TaskStateCancelled,
 		})

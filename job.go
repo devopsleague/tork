@@ -21,6 +21,7 @@ const (
 type Job struct {
 	ID          string            `json:"id,omitempty"`
 	ParentID    string            `json:"parentId,omitempty"`
+	ServiceID   *string           `json:"serviceId,omitempty"`
 	Name        string            `json:"name,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Tags        []string          `json:"tags,omitempty"`
@@ -111,6 +112,7 @@ func (j *Job) Clone() *Job {
 	}
 	return &Job{
 		ID:          j.ID,
+		ServiceID:   j.ServiceID,
 		Name:        j.Name,
 		Description: j.Description,
 		Tags:        j.Tags,

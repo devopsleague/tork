@@ -64,6 +64,8 @@ type Task struct {
 	Workdir     string            `json:"workdir,omitempty"`
 	Priority    int               `json:"priority,omitempty"`
 	Internal    bool              `json:"-"`
+	Probe       *Probe            `json:"probe,omitempty"`
+	Ports       map[string]*Port  `json:"ports,omitempty"`
 }
 
 type TaskSummary struct {
@@ -160,6 +162,10 @@ func (t *Task) Clone() *Task {
 	if t.Registry != nil {
 		registry = t.Registry.Clone()
 	}
+	var probe *Probe
+	if t.Probe != nil {
+		probe = t.Probe.Clone()
+	}
 	return &Task{
 		ID:          t.ID,
 		JobID:       t.JobID,
@@ -200,6 +206,8 @@ func (t *Task) Clone() *Task {
 		Tags:        t.Tags,
 		Workdir:     t.Workdir,
 		Priority:    t.Priority,
+		Probe:       probe,
+		Ports:       ClonePortMap(t.Ports),
 	}
 }
 
@@ -279,4 +287,23 @@ func NewTaskSummary(t *Task) *TaskSummary {
 		Var:         t.Var,
 		Tags:        t.Tags,
 	}
+}
+
+type Port struct {
+	Port    string `json:"port,omitempty"`
+	Address string `json:"address,omitempty"`
+}
+
+func (p *Port) Clone() *Port {
+	return &Port{
+		Port: p.Port,
+	}
+}
+
+func ClonePortMap(ports map[string]*Port) map[string]*Port {
+	copy := make(map[string]*Port, 0)
+	for k, v := range ports {
+		copy[k] = v.Clone()
+	}
+	return copy
 }

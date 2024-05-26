@@ -18,6 +18,7 @@ import (
 	"github.com/runabol/tork/input"
 	"github.com/runabol/tork/middleware/job"
 	"github.com/runabol/tork/middleware/node"
+	"github.com/runabol/tork/middleware/service"
 	"github.com/runabol/tork/middleware/task"
 	"github.com/runabol/tork/middleware/web"
 
@@ -41,6 +42,7 @@ type Coordinator struct {
 	onStarted   task.HandlerFunc
 	onError     task.HandlerFunc
 	onJob       job.HandlerFunc
+	onService   service.HandlerFunc
 	onHeartbeat node.HandlerFunc
 	onCompleted task.HandlerFunc
 	onLogPart   func(*tork.TaskLogPart)
@@ -99,6 +101,9 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 	}
 	if cfg.Queues[mq.QUEUE_JOBS] < 1 {
 		cfg.Queues[mq.QUEUE_JOBS] = 1
+	}
+	if cfg.Queues[mq.QUEUE_SERVICES] < 1 {
+		cfg.Queues[mq.QUEUE_SERVICES] = 1
 	}
 	if cfg.Queues[mq.QUEUE_LOGS] < 1 {
 		cfg.Queues[mq.QUEUE_LOGS] = 1
@@ -161,6 +166,11 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		cfg.Middleware.Job,
 	)
 
+	onService := handlers.NewServiceHandler(
+		cfg.DataStore,
+		cfg.Broker,
+	)
+
 	onHeartbeat := node.ApplyMiddleware(
 		handlers.NewHeartbeatHandler(cfg.DataStore),
 		cfg.Middleware.Node,
@@ -180,6 +190,7 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		onStarted:   onStarted,
 		onError:     onError,
 		onJob:       onJob,
+		onService:   onService,
 		onHeartbeat: onHeartbeat,
 		onCompleted: onCompleted,
 		onLogPart:   onLogPart,
@@ -233,6 +244,10 @@ func (c *Coordinator) Start() error {
 				jobHandler := c.jobHandler(c.onJob)
 				err = c.broker.SubscribeForJobs(func(j *tork.Job) error {
 					return jobHandler(context.Background(), job.StateChange, j)
+				})
+			case mq.QUEUE_SERVICES:
+				err = c.broker.SubscribeForServices(func(s *tork.Service) error {
+					return c.onService(context.Background(), service.StateChange, s)
 				})
 			case mq.QUEUE_LOGS:
 				err = c.broker.SubscribeForTaskLogPart(func(p *tork.TaskLogPart) {

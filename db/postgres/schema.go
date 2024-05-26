@@ -10,6 +10,7 @@ CREATE TABLE nodes (
     cpu_percent        float        not null,
     status             varchar(10)  not null,
     hostname           varchar(128) not null,
+    port               int          not null,
     task_count         int          not null,
     version_           varchar(32)  not null
 );
@@ -46,9 +47,27 @@ CREATE TABLE users_roles (
 );
 
 CREATE UNIQUE INDEX idx_users_roles_uniq ON users_roles (user_id,role_id);
+CREATE TABLE services (
+    id            varchar(32)   not null primary key,
+    name          varchar(64)   not null,
+	namespace_    varchar(64)   not null,
+    state         varchar(10)   not null,
+    created_at    timestamp     not null,
+    run_          text          not null,
+    image         varchar(256)  not null,
+    env           jsonb         not null,
+	queue         varchar(256)  not null,
+    files_        jsonb         not null,
+	probe         jsonb         not null,
+	ports         jsonb         not null
+);
+
+CREATE INDEX idx_services_state ON services (state);
+CREATE UNIQUE INDEX idx_ns_name_state ON services (namespace_,name) where state != 'DELETED';
 
 CREATE TABLE jobs (
     id            varchar(32) not null primary key,
+    service_id    varchar(32) references services(id),
     name          varchar(256),
     tags          text[]      not null default '{}',
     state         varchar(10) not null,
@@ -155,4 +174,5 @@ CREATE TABLE tasks_log_parts (
 
 CREATE INDEX idx_tasks_log_parts_task_id ON tasks_log_parts (task_id);
 CREATE INDEX idx_tasks_log_parts_created_at ON tasks_log_parts (created_at);
+
 `

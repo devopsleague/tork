@@ -338,6 +338,7 @@ func TestPostgresCreateAndGetNode(t *testing.T) {
 		Name:     "some node",
 		Hostname: "some-name",
 		Version:  "1.0.0",
+		Port:     1234,
 	}
 	err = ds.CreateNode(ctx, n1)
 	assert.NoError(t, err)
@@ -345,6 +346,7 @@ func TestPostgresCreateAndGetNode(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, n1.ID, n2.ID)
 	assert.Equal(t, "some-name", n2.Hostname)
+	assert.Equal(t, 1234, n2.Port)
 	assert.Equal(t, "1.0.0", n2.Version)
 	assert.Equal(t, "some node", n2.Name)
 }
@@ -1286,4 +1288,83 @@ func TestPostgresCreateRole(t *testing.T) {
 	uroles, err = ds.GetUserRoles(ctx, u.ID)
 	assert.NoError(t, err)
 	assert.Len(t, uroles, 0)
+}
+
+func TestPostgresCreateService(t *testing.T) {
+	ctx := context.Background()
+	dsn := "host=localhost user=tork password=tork dbname=tork port=5432 sslmode=disable"
+	ds, err := NewPostgresDataStore(dsn)
+	assert.NoError(t, err)
+	now := time.Now().UTC()
+	name := fmt.Sprintf("my-service-%d", time.Now().Unix())
+	svc := &tork.Service{
+		Namespace: "default",
+		Name:      name,
+		CreatedAt: now,
+		State:     tork.ServiceStatePending,
+		Probe: &tork.Probe{
+			Path:     "/helath",
+			Interval: "1m",
+		},
+	}
+	err = ds.CreateService(ctx, svc)
+	assert.NoError(t, err)
+
+	svc2, err := ds.GetService(ctx, "default", name)
+	assert.NoError(t, err)
+	assert.Equal(t, svc.ID, svc2.ID)
+	assert.Equal(t, tork.ServiceStatePending, svc2.State)
+
+	err = ds.UpdateService(ctx, svc.Namespace, svc.Name, func(u *tork.Service) error {
+		u.State = tork.ServiceStateRunning
+		return nil
+	})
+	assert.NoError(t, err)
+
+	svc3, err := ds.GetService(ctx, "default", name)
+	assert.NoError(t, err)
+	assert.Equal(t, svc.ID, svc3.ID)
+	assert.Equal(t, tork.ServiceStateRunning, svc3.State)
+
+	u := &tork.User{
+		ID:        uuid.NewUUID(),
+		Username:  uuid.NewShortUUID(),
+		Name:      "Tester",
+		CreatedAt: &now,
+	}
+	err = ds.CreateUser(ctx, u)
+	assert.NoError(t, err)
+
+	j1 := tork.Job{
+		ID:        uuid.NewUUID(),
+		CreatedBy: u,
+		ServiceID: &svc.ID,
+		State:     tork.JobStateRunning,
+	}
+	err = ds.CreateJob(ctx, &j1)
+	assert.NoError(t, err)
+
+	t1 := tork.Task{
+		ID:        uuid.NewUUID(),
+		JobID:     j1.ID,
+		State:     tork.TaskStateRunning,
+		CreatedAt: &now,
+	}
+	err = ds.CreateTask(ctx, &t1)
+	assert.NoError(t, err)
+
+	jobs, err := ds.GetRunningServiceJobs(ctx, "default", name)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, jobs)
+
+	tasks, err := ds.GetRunningServiceTasks(ctx, "default", name)
+	assert.NoError(t, err)
+	assert.Len(t, tasks, 1)
+
+	err = ds.DeleteService(ctx, "default", name)
+	assert.NoError(t, err)
+
+	svc4, err := ds.GetService(ctx, "default", name)
+	assert.ErrorIs(t, err, datastore.ErrServiceNotFound)
+	assert.Nil(t, svc4)
 }

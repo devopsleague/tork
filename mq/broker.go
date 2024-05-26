@@ -33,6 +33,9 @@ type Broker interface {
 	PublishTaskLogPart(ctx context.Context, p *tork.TaskLogPart) error
 	SubscribeForTaskLogPart(handler func(p *tork.TaskLogPart)) error
 
+	PublishService(ctx context.Context, s *tork.Service) error
+	SubscribeForServices(handler func(s *tork.Service) error) error
+
 	Queues(ctx context.Context) ([]QueueInfo, error)
 	HealthCheck(ctx context.Context) error
 	Shutdown(ctx context.Context) error

@@ -429,10 +429,10 @@ func (ds *PostgresDatastore) UpdateTask(ctx context.Context, id string, modify f
 
 func (ds *PostgresDatastore) CreateNode(ctx context.Context, n *tork.Node) error {
 	q := `insert into nodes 
-	       (id,name,started_at,last_heartbeat_at,cpu_percent,queue,status,hostname,task_count,version_) 
+	       (id,name,started_at,last_heartbeat_at,cpu_percent,queue,status,hostname,task_count,version_,port) 
 	      values
-	       ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
-	_, err := ds.exec(q, n.ID, n.Name, n.StartedAt, n.LastHeartbeatAt, n.CPUPercent, n.Queue, n.Status, n.Hostname, n.TaskCount, n.Version)
+	       ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
+	_, err := ds.exec(q, n.ID, n.Name, n.StartedAt, n.LastHeartbeatAt, n.CPUPercent, n.Queue, n.Status, n.Hostname, n.TaskCount, n.Version, n.Port)
 	if err != nil {
 		return errors.Wrapf(err, "error inserting node to the db")
 	}
@@ -560,12 +560,12 @@ func (ds *PostgresDatastore) CreateJob(ctx context.Context, j *tork.Job) error {
 		}
 		sql := `insert into jobs (id,name,description,state,created_at,started_at,tasks,position,
 					inputs,context,parent_id,task_count,output_,result,error_,defaults,webhooks,
-					created_by,tags,auto_delete,secrets) 
+					created_by,tags,auto_delete,secrets,service_id) 
 				values
-					($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`
+					($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`
 		if _, err := ptx.exec(sql, j.ID, j.Name, j.Description, j.State, j.CreatedAt, j.StartedAt, tasks, j.Position,
 			inputs, c, j.ParentID, j.TaskCount, j.Output, j.Result, j.Error, defaults, webhooks, j.CreatedBy.ID,
-			pq.StringArray(j.Tags), autoDelete, secrets); err != nil {
+			pq.StringArray(j.Tags), autoDelete, secrets, j.ServiceID); err != nil {
 			return errors.Wrapf(err, "error inserting job to the db")
 		}
 		for _, perm := range j.Permissions {
@@ -591,6 +591,7 @@ func (ds *PostgresDatastore) CreateJob(ctx context.Context, j *tork.Job) error {
 	})
 
 }
+
 func (ds *PostgresDatastore) UpdateJob(ctx context.Context, id string, modify func(u *tork.Job) error) error {
 	return ds.WithTx(ctx, func(tx datastore.Datastore) error {
 		ptx, ok := tx.(*PostgresDatastore)
@@ -1180,4 +1181,150 @@ func (ds *PostgresDatastore) HealthCheck(ctx context.Context) error {
 		return errors.Wrapf(err, "error reading from nodes table")
 	}
 	return nil
+}
+
+func (ds *PostgresDatastore) CreateService(ctx context.Context, s *tork.Service) error {
+	if s.Namespace == "" {
+		return errors.New("must provide namespace")
+	}
+	if s.Name == "" {
+		return errors.New("must provide name")
+	}
+	if s.Probe == nil {
+		return errors.New("must provide a probe")
+	}
+	if s.State == "" {
+		return errors.New("must provide state")
+	}
+	if s.Env == nil {
+		s.Env = make(map[string]string)
+	}
+	env, err := json.Marshal(s.Env)
+	if err != nil {
+		return errors.Wrapf(err, "failed to serialize service.env")
+	}
+	if s.Files == nil {
+		s.Files = make(map[string]string)
+	}
+	files, err := json.Marshal(s.Files)
+	if err != nil {
+		return errors.Wrapf(err, "failed to serialize service.files")
+	}
+	probe, err := json.Marshal(s.Probe)
+	if err != nil {
+		return errors.Wrapf(err, "failed to serialize service.probe")
+	}
+	if s.Ports == nil {
+		s.Ports = make([]*tork.Port, 0)
+	}
+	ports, err := json.Marshal(s.Ports)
+	if err != nil {
+		return errors.Wrapf(err, "failed to serialize service.ports")
+	}
+	s.ID = uuid.NewUUID()
+	s.CreatedAt = time.Now().UTC()
+	q := `insert into services 
+	       (id,name,namespace_,state,created_at,run_,image,env,queue,files_,probe,ports) 
+	      values
+	       ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
+	if _, err := ds.exec(q, s.ID, s.Name, s.Namespace, s.State, s.CreatedAt, s.Run, s.Image, string(env), s.Queue, string(files), string(probe), string(ports)); err != nil {
+		return errors.Wrapf(err, "error inserting service to the db")
+	}
+	return nil
+}
+
+func (ds *PostgresDatastore) GetService(ctx context.Context, ns, name string) (*tork.Service, error) {
+	sr := serviceRecord{}
+	if err := ds.get(&sr, `SELECT * FROM services where namespace_ = $1 and name = $2 and state != 'DELETED'`, ns, name); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, datastore.ErrServiceNotFound
+		}
+		return nil, errors.Wrapf(err, "error fetching service from db")
+	}
+	return sr.toService()
+}
+
+func (ds *PostgresDatastore) DeleteService(ctx context.Context, ns, name string) error {
+	_, err := ds.exec(`update services set state = 'DELETED' where namespace_ = $1 and name = $2`, ns, name)
+	return errors.Wrapf(err, "error marking service as deleted")
+}
+
+func (ds *PostgresDatastore) GetRunningServiceTasks(ctx context.Context, ns, name string) ([]*tork.Task, error) {
+	svc, err := ds.GetService(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	if svc == nil {
+		return nil, datastore.ErrServiceNotFound
+	}
+	rs := []taskRecord{}
+	if err := ds.select_(&rs, `SELECT * FROM tasks where state = 'RUNNING' and job_id in (select id from jobs where service_id = $1 and state = 'RUNNING')`, svc.ID); err != nil {
+
+		return nil, errors.Wrapf(err, "error fetching job from db")
+	}
+	tasks := make([]*tork.Task, len(rs))
+	for i, r := range rs {
+		task, err := r.toTask()
+		if err != nil {
+			return nil, err
+		}
+		tasks[i] = task
+	}
+	return tasks, nil
+}
+
+func (ds *PostgresDatastore) GetRunningServiceJobs(ctx context.Context, ns, name string) ([]*tork.JobSummary, error) {
+	svc, err := ds.GetService(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	if svc == nil {
+		return nil, datastore.ErrServiceNotFound
+	}
+	rs := []jobRecord{}
+	if err := ds.select_(&rs, `SELECT * FROM jobs where service_id = $1 and state = 'RUNNING'`, svc.ID); err != nil {
+
+		return nil, errors.Wrapf(err, "error fetching job from db")
+	}
+	jobs := make([]*tork.JobSummary, len(rs))
+	for i, r := range rs {
+		createdBy, err := ds.GetUser(ctx, r.CreatedBy)
+		if err != nil {
+			return nil, err
+		}
+		j, err := r.toJob([]*tork.Task{}, []*tork.Task{}, createdBy, []*tork.Permission{})
+		if err != nil {
+			return nil, err
+		}
+		jobs[i] = tork.NewJobSummary(j)
+	}
+	return jobs, nil
+}
+
+func (ds *PostgresDatastore) UpdateService(ctx context.Context, ns, name string, modify func(u *tork.Service) error) error {
+	return ds.WithTx(ctx, func(tx datastore.Datastore) error {
+		ptx, ok := tx.(*PostgresDatastore)
+		if !ok {
+			return errors.New("unable to cast to a postgres datastore")
+		}
+		sr := serviceRecord{}
+		if err := ptx.get(&sr, `SELECT * FROM services where namespace_ = $1 and name = $2 for update`, ns, name); err != nil {
+			return errors.Wrapf(err, "error fetching service from db")
+		}
+		s, err := sr.toService()
+		if err != nil {
+			return err
+		}
+		if err := modify(s); err != nil {
+			return err
+		}
+		q := `update services set 
+              state = $1
+		      where namespace_ = $2
+			  and   name = $3`
+		if _, err := ptx.exec(q, s.State, ns, name); err != nil {
+			return errors.Wrapf(err, "error update service in db")
+		}
+		return nil
+	})
 }

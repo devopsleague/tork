@@ -896,3 +896,32 @@ func TestShutdown(t *testing.T) {
 	w := httptest.NewRecorder()
 	api.server.Handler.ServeHTTP(w, req)
 }
+
+func Test_createService(t *testing.T) {
+	api, err := NewAPI(Config{
+		DataStore: inmemory.NewInMemoryDatastore(),
+		Broker:    mq.NewInMemoryBroker(),
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, api)
+	req, err := http.NewRequest("POST", "/services", strings.NewReader(`{
+		"name":"test",
+		"namespace":"default",
+		"ports": [{"port": "8080"}],
+		"probe": {
+		  "path":"/health"
+		},
+		"image":"alpine:latest"
+	}`))
+	req.Header.Add("Content-Type", "application/json")
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	api.server.Handler.ServeHTTP(w, req)
+	body, err := io.ReadAll(w.Body)
+	assert.NoError(t, err)
+	j := tork.Service{}
+	err = json.Unmarshal(body, &j)
+	assert.NoError(t, err)
+	assert.Equal(t, tork.ServiceStatePending, j.State)
+	assert.Equal(t, http.StatusOK, w.Code)
+}

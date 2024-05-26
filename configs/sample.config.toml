@@ -29,13 +29,14 @@ address = "localhost:8000"
 name = "Coordinator"
 
 [coordinator.api]
-endpoints.health = true  # turn on|off the /health endpoint
-endpoints.jobs = true    # turn on|off the /jobs endpoints
-endpoints.tasks = true   # turn on|off the /tasks endpoints
-endpoints.nodes = true   # turn on|off the /nodes endpoint
-endpoints.queues = true  # turn on|off the /queues endpoint
-endpoints.metrics = true # turn on|off the /metrics endpoint
-endpoints.users = true   # turn on|off the /users endpoints
+endpoints.health = true   # turn on|off the /health endpoint
+endpoints.jobs = true     # turn on|off the /jobs endpoints
+endpoints.tasks = true    # turn on|off the /tasks endpoints
+endpoints.users = true    # turn on|off the /users endpoints
+endpoints.services = true # turn on|off the /services endpoints
+endpoints.nodes = true    # turn on|off the /nodes endpoint
+endpoints.queues = true   # turn on|off the /queues endpoint
+endpoints.metrics = true  # turn on|off the /metrics endpoint
 
 [coordinator.queues]
 completed = 1 # completed queue consumers

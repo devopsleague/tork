@@ -293,3 +293,18 @@ func (b *InMemoryBroker) SubscribeForTaskLogPart(handler func(p *tork.TaskLogPar
 		return nil
 	})
 }
+
+func (b *InMemoryBroker) PublishService(ctx context.Context, s *tork.Service) error {
+	return b.publish(QUEUE_SERVICES, s)
+}
+
+func (b *InMemoryBroker) SubscribeForServices(handler func(s *tork.Service) error) error {
+	return b.subscribe(QUEUE_SERVICES, func(m any) error {
+		s, ok := m.(*tork.Service)
+		if !ok {
+			return errors.New("can't cast to service")
+		}
+		handler(s)
+		return nil
+	})
+}

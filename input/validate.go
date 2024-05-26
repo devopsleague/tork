@@ -14,7 +14,8 @@ import (
 )
 
 var (
-	mountPattern = regexp.MustCompile(`^[-/\.0-9a-zA-Z_/= ]+$`)
+	mountPattern       = regexp.MustCompile(`^[-/\.0-9a-zA-Z_/= ]+$`)
+	serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
 func (ji Job) Validate(ds datastore.Datastore) error {
@@ -32,6 +33,25 @@ func (ji Job) Validate(ds datastore.Datastore) error {
 	validate.RegisterStructValidation(taskInputValidation, Task{})
 	validate.RegisterStructValidation(validatePermission(ds), Permission{})
 	return validate.Struct(ji)
+}
+
+func (si Service) Validate() error {
+	validate := validator.New()
+	if err := validate.RegisterValidation("duration", validateDuration); err != nil {
+		return err
+	}
+	if err := validate.RegisterValidation("queue", validateQueue); err != nil {
+		return err
+	}
+	if err := validate.RegisterValidation("expr", validateExpr); err != nil {
+		return err
+	}
+	if err := validate.RegisterValidation("servicename", validateServiceName); err != nil {
+		return err
+	}
+	validate.RegisterStructValidation(validateMount, Mount{})
+	validate.RegisterStructValidation(taskInputValidation, Task{})
+	return validate.Struct(si)
 }
 
 func validateExpr(fl validator.FieldLevel) bool {
@@ -101,6 +121,17 @@ func validateQueue(fl validator.FieldLevel) bool {
 		return false
 	}
 	if mq.IsCoordinatorQueue(v) {
+		return false
+	}
+	return true
+}
+
+func validateServiceName(fl validator.FieldLevel) bool {
+	v := fl.Field().String()
+	if v == "" {
+		return false
+	}
+	if !serviceNamePattern.MatchString(v) {
 		return false
 	}
 	return true
